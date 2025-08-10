@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: snapzy-worker
+  labels:
+    app: snapzy-worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: snapzy-worker
+  template:
+    metadata:
+      labels:
+        app: snapzy-worker
+    spec:
+      containers:
+      - name: worker
+        image: snapzy/worker:latest
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: snapzy-secrets
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: snapzy-secrets
+              key: redis-url
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          exec:
+            command:
+            - /bin/sh
+            - -c
+            - "ps aux | grep worker | grep -v grep"
+          initialDelaySeconds: 30
+          periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: snapzy-worker-service
+spec:
+  selector:
+    app: snapzy-worker
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 3000
+  type: ClusterIP
