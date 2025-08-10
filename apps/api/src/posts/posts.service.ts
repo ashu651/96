@@ -1,30 +1,27 @@
-import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreatePostDto } from './dto/create-post.dto';
 import { UpdatePostDto } from './dto/update-post.dto';
-import { QueryPostsDto, PostSortBy, PostSortOrder } from './dto/query-posts.dto';
+import { GetPostsDto } from './dto/get-posts.dto';
 
 @Injectable()
 export class PostsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private prisma: PrismaService) {}
 
-  /**
-   * Create a new post
-   */
-  async create(userId: string, createPostDto: CreatePostDto) {
-    const { hashtags, media, ...postData } = createPostDto;
+  async createPost(userId: string, createPostDto: CreatePostDto) {
+    const { content, mediaUrls, isPrivate } = createPostDto;
 
-    // Process hashtags - extract from content and merge with provided hashtags
-    const extractedHashtags = this.extractHashtagsFromContent(postData.content);
-    const allHashtags = [...new Set([...extractedHashtags, ...(hashtags || [])])];
-
-    // Create post with hashtags and media
     const post = await this.prisma.post.create({
       data: {
-        ...postData,
+        caption: content,
+        isPrivate,
         authorId: userId,
-        hashtags: allHashtags,
-        media: media || [],
+        media: mediaUrls ? mediaUrls.map(url => ({ url })) : [],
       },
       include: {
         author: {
@@ -32,14 +29,12 @@ export class PostsService {
             id: true,
             username: true,
             avatar: true,
-            isVerified: true,
           },
         },
         _count: {
           select: {
             likes: true,
             comments: true,
-            shares: true,
           },
         },
       },
@@ -48,156 +43,27 @@ export class PostsService {
     return post;
   }
 
-  /**
-   * Get all posts with filtering and pagination
-   */
-  async findAll(query: QueryPostsDto, currentUserId?: string) {
-    const { page = 1, limit = 20, search, userId, username, hashtag, location, sortBy, sortOrder, hasMedia, dateFrom, dateTo } = query;
-    const skip = (page - 1) * limit;
-
-    // Build where clause
-    const where: any = {
-      isPublic: true, // Only show public posts by default
-      deletedAt: null,
-    };
-
-    if (search) {
-      where.OR = [
-        { content: { contains: search, mode: 'insensitive' } },
-        { hashtags: { hasSome: [search] } },
-      ];
-    }
-
-    if (userId) {
-      where.authorId = userId;
-    }
-
-    if (username) {
-      where.author = { username };
-    }
-
-    if (hashtag) {
-      where.hashtags = { has: hashtag };
-    }
-
-    if (location) {
-      where.location = { contains: location, mode: 'insensitive' };
-    }
-
-    if (hasMedia !== undefined) {
-      if (hasMedia) {
-        where.media = { isEmpty: false };
-      } else {
-        where.media = { isEmpty: true };
-      }
-    }
-
-    if (dateFrom || dateTo) {
-      where.createdAt = {};
-      if (dateFrom) where.createdAt.gte = new Date(dateFrom);
-      if (dateTo) where.createdAt.lte = new Date(dateTo);
-    }
-
-    // Build order clause
-    const orderBy: any = {};
-    if (sortBy === PostSortBy.LIKES_COUNT) {
-      orderBy.likes = { _count: sortOrder };
-    } else if (sortBy === PostSortBy.COMMENTS_COUNT) {
-      orderBy.comments = { _count: sortOrder };
-    } else if (sortBy === PostSortBy.SHARES_COUNT) {
-      orderBy.shares = { _count: sortOrder };
-    } else {
-      orderBy[sortBy] = sortOrder;
-    }
-
-    // Get posts with pagination
-    const [posts, total] = await Promise.all([
-      this.prisma.post.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy,
-        include: {
-          author: {
-            select: {
-              id: true,
-              username: true,
-              avatar: true,
-              isVerified: true,
-            },
-          },
-          _count: {
-            select: {
-              likes: true,
-              comments: true,
-              shares: true,
-            },
-          },
-          // Include user's like status if authenticated
-          ...(currentUserId && {
-            likes: {
-              where: { userId: currentUserId },
-              select: { id: true },
-            },
-          }),
-        },
-      }),
-      this.prisma.post.count({ where }),
-    ]);
-
-    // Transform posts to include like status
-    const transformedPosts = posts.map(post => ({
-      ...post,
-      isLiked: currentUserId ? post.likes.length > 0 : false,
-      likes: undefined, // Remove likes array from response
-    }));
-
-    return {
-      posts: transformedPosts,
-      pagination: {
-        page,
-        limit,
-        total,
-        pages: Math.ceil(total / limit),
-        hasNext: page * limit < total,
-        hasPrev: page > 1,
-      },
-    };
-  }
-
-  /**
-   * Get a single post by ID
-   */
-  async findOne(id: string, currentUserId?: string) {
-    const post = await this.prisma.post.findFirst({
-      where: {
-        id,
-        OR: [
-          { isPublic: true },
-          { authorId: currentUserId }, // Allow author to see their private posts
-        ],
-        deletedAt: null,
-      },
+  async getPostById(postId: string, userId?: string) {
+    const post = await this.prisma.post.findUnique({
+      where: { id: postId },
       include: {
         author: {
           select: {
             id: true,
             username: true,
             avatar: true,
-            isVerified: true,
+            bio: true,
           },
         },
         _count: {
           select: {
             likes: true,
             comments: true,
-            shares: true,
           },
         },
-        // Include user's like status if authenticated
-        ...(currentUserId && {
+        ...(userId && {
           likes: {
-            where: { userId: currentUserId },
+            where: { userId },
             select: { id: true },
           },
         }),
@@ -208,47 +74,183 @@ export class PostsService {
       throw new NotFoundException('Post not found');
     }
 
-    // Transform post to include like status
-    const transformedPost = {
-      ...post,
-      isLiked: currentUserId ? post.likes.length > 0 : false,
-      likes: undefined, // Remove likes array from response
-    };
+    if (post.isPrivate && post.authorId !== userId) {
+      throw new ForbiddenException('This post is private');
+    }
 
-    return transformedPost;
+    return {
+      ...post,
+      isLiked: userId ? post.likes.length > 0 : false,
+      likes: undefined,
+    };
   }
 
-  /**
-   * Update a post
-   */
-  async update(id: string, userId: string, updatePostDto: UpdatePostDto) {
-    // Check if post exists and user owns it
-    const existingPost = await this.prisma.post.findFirst({
-      where: { id, authorId: userId, deletedAt: null },
+  async getPosts(getPostsDto: GetPostsDto, userId?: string) {
+    const { page = 1, limit = 10, userId: authorId, search, isPrivate, hasMedia, sortBy, sortOrder } = getPostsDto;
+    const skip = (page - 1) * limit;
+
+    let where: any = {};
+
+    if (authorId) {
+      where.authorId = authorId;
+    }
+
+    if (search) {
+      where.caption = { contains: search, mode: 'insensitive' };
+    }
+
+    if (isPrivate !== undefined) {
+      where.isPrivate = isPrivate;
+    } else {
+      where.isPrivate = false; // Default to public posts
+    }
+
+    if (hasMedia) {
+      where.media = { some: {} };
+    }
+
+    const [posts, total] = await Promise.all([
+      this.prisma.post.findMany({
+        where,
+        include: {
+          author: {
+            select: {
+              id: true,
+              username: true,
+              avatar: true,
+            },
+          },
+          _count: {
+            select: {
+              likes: true,
+              comments: true,
+            },
+          },
+          ...(userId && {
+            likes: {
+              where: { userId },
+              select: { id: true },
+            },
+          }),
+        },
+        orderBy: this.getOrderBy(sortBy, sortOrder),
+        skip,
+        take: limit,
+      }),
+      this.prisma.post.count({ where }),
+    ]);
+
+    const postsWithLikeStatus = posts.map(post => ({
+      ...post,
+      isLiked: userId ? post.likes.length > 0 : false,
+      likes: undefined,
+    }));
+
+    return {
+      posts: postsWithLikeStatus,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  async getFeedPosts(userId: string, page = 1, limit = 10) {
+    const skip = (page - 1) * limit;
+
+    // Get posts from followed users and user's own posts
+    const followedUsers = await this.prisma.follow.findMany({
+      where: { followerId: userId },
+      select: { followingId: true },
+    });
+    
+    const followedIds = followedUsers.map(f => f.followingId);
+    followedIds.push(userId);
+    
+    const where = { 
+      authorId: { in: followedIds },
+      isPrivate: false 
+    };
+
+    const [posts, total] = await Promise.all([
+      this.prisma.post.findMany({
+        where,
+        include: {
+          author: {
+            select: {
+              id: true,
+              username: true,
+              avatar: true,
+            },
+          },
+          _count: {
+            select: {
+              likes: true,
+              comments: true,
+            },
+          },
+          likes: {
+            where: { userId },
+            select: { id: true },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.post.count({ where }),
+    ]);
+
+    const postsWithLikeStatus = posts.map(post => ({
+      ...post,
+      isLiked: post.likes.length > 0,
+      likes: undefined,
+    }));
+
+    return {
+      posts: postsWithLikeStatus,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  private getOrderBy(sortBy: string = 'createdAt', sortOrder: string = 'desc') {
+    switch (sortBy) {
+      case 'likes':
+        return { _count: { likes: sortOrder as 'asc' | 'desc' } };
+      case 'comments':
+        return { _count: { comments: sortOrder as 'asc' | 'desc' } };
+      case 'createdAt':
+      default:
+        return { createdAt: sortOrder as 'asc' | 'desc' };
+    }
+  }
+
+  async updatePost(postId: string, userId: string, updatePostDto: UpdatePostDto) {
+    const post = await this.prisma.post.findUnique({
+      where: { id: postId },
+      select: { authorId: true },
     });
 
-    if (!existingPost) {
-      throw new NotFoundException('Post not found or you do not have permission to edit it');
+    if (!post) {
+      throw new NotFoundException('Post not found');
     }
 
-    const { hashtags, media, ...postData } = updatePostDto;
-
-    // Process hashtags if content is being updated
-    let processedHashtags = existingPost.hashtags;
-    if (postData.content) {
-      const extractedHashtags = this.extractHashtagsFromContent(postData.content);
-      processedHashtags = [...new Set([...extractedHashtags, ...(hashtags || [])])];
-    } else if (hashtags) {
-      processedHashtags = hashtags;
+    if (post.authorId !== userId) {
+      throw new ForbiddenException('You can only edit your own posts');
     }
 
-    // Update post
     const updatedPost = await this.prisma.post.update({
-      where: { id },
+      where: { id: postId },
       data: {
-        ...postData,
-        hashtags: processedHashtags,
-        media: media !== undefined ? media : existingPost.media,
+        caption: updatePostDto.content,
+        isPrivate: updatePostDto.isPrivate,
         updatedAt: new Date(),
       },
       include: {
@@ -257,14 +259,12 @@ export class PostsService {
             id: true,
             username: true,
             avatar: true,
-            isVerified: true,
           },
         },
         _count: {
           select: {
             likes: true,
             comments: true,
-            shares: true,
           },
         },
       },
@@ -273,269 +273,164 @@ export class PostsService {
     return updatedPost;
   }
 
-  /**
-   * Delete a post (soft delete)
-   */
-  async remove(id: string, userId: string) {
-    // Check if post exists and user owns it
-    const existingPost = await this.prisma.post.findFirst({
-      where: { id, authorId: userId, deletedAt: null },
+  async deletePost(postId: string, userId: string) {
+    const post = await this.prisma.post.findUnique({
+      where: { id: postId },
+      select: { authorId: true },
     });
 
-    if (!existingPost) {
-      throw new NotFoundException('Post not found or you do not have permission to delete it');
+    if (!post) {
+      throw new NotFoundException('Post not found');
     }
 
-    // Soft delete the post
-    await this.prisma.post.update({
-      where: { id },
-      data: { deletedAt: new Date() },
+    if (post.authorId !== userId) {
+      throw new ForbiddenException('You can only delete your own posts');
+    }
+
+    await this.prisma.post.delete({
+      where: { id: postId },
     });
 
     return { message: 'Post deleted successfully' };
   }
 
-  /**
-   * Get user's feed (posts from followed users and own posts)
-   */
-  async getFeed(userId: string, page: number = 1, limit: number = 20) {
-    const skip = (page - 1) * limit;
-
-    // Get user's following list
-    const following = await this.prisma.follow.findMany({
-      where: { followerId: userId },
-      select: { followingId: true },
+  async likePost(postId: string, userId: string) {
+    const existingLike = await this.prisma.like.findFirst({
+      where: { postId, userId },
     });
 
-    const followingIds = following.map(f => f.followingId);
+    if (existingLike) {
+      throw new BadRequestException('Post already liked');
+    }
 
-    // Get posts from followed users and own posts
-    const [posts, total] = await Promise.all([
-      this.prisma.post.findMany({
-        where: {
-          OR: [
-            { authorId: { in: followingIds } },
-            { authorId: userId },
-          ],
-          isPublic: true,
-          deletedAt: null,
+    await this.prisma.like.create({
+      data: { postId, userId },
+    });
+
+    return { message: 'Post liked successfully' };
+  }
+
+  async unlikePost(postId: string, userId: string) {
+    const like = await this.prisma.like.findFirst({
+      where: { postId, userId },
+    });
+
+    if (!like) {
+      throw new BadRequestException('Post not liked');
+    }
+
+    await this.prisma.like.delete({
+      where: { id: like.id },
+    });
+
+    return { message: 'Post unliked successfully' };
+  }
+
+  async getPostLikes(postId: string, page = 1, limit = 20) {
+    const skip = (page - 1) * limit;
+
+    const [likes, total] = await Promise.all([
+      this.prisma.like.findMany({
+        where: { postId },
+        include: {
+          user: {
+            select: {
+              id: true,
+              username: true,
+              avatar: true,
+            },
+          },
         },
         skip,
         take: limit,
         orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.like.count({ where: { postId } }),
+    ]);
+
+    return {
+      likes: likes.map(like => like.user),
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  async getPostComments(postId: string, page = 1, limit = 20) {
+    const skip = (page - 1) * limit;
+
+    const [comments, total] = await Promise.all([
+      this.prisma.comment.findMany({
+        where: { postId },
         include: {
           author: {
             select: {
               id: true,
               username: true,
               avatar: true,
-              isVerified: true,
             },
           },
-          _count: {
-            select: {
-              likes: true,
-              comments: true,
-              shares: true,
-            },
-          },
-          likes: {
-            where: { userId },
-            select: { id: true },
-          },
         },
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'asc' },
       }),
-      this.prisma.post.count({
-        where: {
-          OR: [
-            { authorId: { in: followingIds } },
-            { authorId: userId },
-          ],
-          isPublic: true,
-          deletedAt: null,
-        },
-      }),
+      this.prisma.comment.count({ where: { postId } }),
     ]);
 
-    // Transform posts to include like status
-    const transformedPosts = posts.map(post => ({
-      ...post,
-      isLiked: post.likes.length > 0,
-      likes: undefined, // Remove likes array from response
-    }));
-
     return {
-      posts: transformedPosts,
+      comments,
       pagination: {
         page,
         limit,
         total,
         pages: Math.ceil(total / limit),
-        hasNext: page * limit < total,
-        hasPrev: page > 1,
       },
     };
   }
 
-  /**
-   * Get trending posts (most liked/commented in recent time)
-   */
-  async getTrending(limit: number = 10) {
-    const oneWeekAgo = new Date();
-    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-
-    const posts = await this.prisma.post.findMany({
-      where: {
-        createdAt: { gte: oneWeekAgo },
-        isPublic: true,
-        deletedAt: null,
+  async addComment(postId: string, userId: string, content: string) {
+    const comment = await this.prisma.comment.create({
+      data: {
+        content,
+        postId,
+        authorId: userId,
       },
-      orderBy: [
-        { likes: { _count: 'desc' } },
-        { comments: { _count: 'desc' } },
-        { createdAt: 'desc' },
-      ],
-      take: limit,
       include: {
         author: {
           select: {
             id: true,
             username: true,
             avatar: true,
-            isVerified: true,
-          },
-        },
-        _count: {
-          select: {
-            likes: true,
-            comments: true,
-            shares: true,
           },
         },
       },
     });
 
-    return posts;
+    return comment;
   }
 
-  /**
-   * Extract hashtags from post content
-   */
-  private extractHashtagsFromContent(content: string): string[] {
-    const hashtagRegex = /#(\w+)/g;
-    const matches = content.match(hashtagRegex);
-    return matches ? matches.map(tag => tag.slice(1)) : [];
-  }
+  async deleteComment(commentId: string, userId: string) {
+    const comment = await this.prisma.comment.findUnique({
+      where: { id: commentId },
+      select: { authorId: true },
+    });
 
-  /**
-   * Get posts by hashtag
-   */
-  async getByHashtag(hashtag: string, page: number = 1, limit: number = 20) {
-    const skip = (page - 1) * limit;
+    if (!comment) {
+      throw new NotFoundException('Comment not found');
+    }
 
-    const [posts, total] = await Promise.all([
-      this.prisma.post.findMany({
-        where: {
-          hashtags: { has: hashtag },
-          isPublic: true,
-          deletedAt: null,
-        },
-        skip,
-        take: limit,
-        orderBy: { createdAt: 'desc' },
-        include: {
-          author: {
-            select: {
-              id: true,
-              username: true,
-              avatar: true,
-              isVerified: true,
-            },
-          },
-          _count: {
-            select: {
-              likes: true,
-              comments: true,
-              shares: true,
-            },
-          },
-        },
-      }),
-      this.prisma.post.count({
-        where: {
-          hashtags: { has: hashtag },
-          isPublic: true,
-          deletedAt: null,
-        },
-      }),
-    ]);
+    if (comment.authorId !== userId) {
+      throw new ForbiddenException('You can only delete your own comments');
+    }
 
-    return {
-      posts,
-      pagination: {
-        page,
-        limit,
-        total,
-        pages: Math.ceil(total / limit),
-        hasNext: page * limit < total,
-        hasPrev: page > 1,
-      },
-    };
-  }
+    await this.prisma.comment.delete({
+      where: { id: commentId },
+    });
 
-  /**
-   * Get posts by location
-   */
-  async getByLocation(location: string, page: number = 1, limit: number = 20) {
-    const skip = (page - 1) * limit;
-
-    const [posts, total] = await Promise.all([
-      this.prisma.post.findMany({
-        where: {
-          location: { contains: location, mode: 'insensitive' },
-          isPublic: true,
-          deletedAt: null,
-        },
-        skip,
-        take: limit,
-        orderBy: { createdAt: 'desc' },
-        include: {
-          author: {
-            select: {
-              id: true,
-              username: true,
-              avatar: true,
-              isVerified: true,
-            },
-          },
-          _count: {
-            select: {
-              likes: true,
-              comments: true,
-              shares: true,
-            },
-          },
-        },
-      }),
-      this.prisma.post.count({
-        where: {
-          location: { contains: location, mode: 'insensitive' },
-          isPublic: true,
-          deletedAt: null,
-        },
-      }),
-    ]);
-
-    return {
-      posts,
-      pagination: {
-        page,
-        limit,
-        total,
-        pages: Math.ceil(total / limit),
-        hasNext: page * limit < total,
-        hasPrev: page > 1,
-      },
-    };
+    return { message: 'Comment deleted successfully' };
   }
 }

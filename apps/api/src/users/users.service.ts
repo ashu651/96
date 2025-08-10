@@ -28,6 +28,7 @@ export class UsersService {
         bio: true,
         avatar: true,
         isEmailVerified: true,
+        isActive: true,
         createdAt: true,
         lastLoginAt: true,
         _count: {
@@ -194,8 +195,8 @@ export class UsersService {
     const where = query
       ? {
           OR: [
-            { username: { contains: query, mode: 'insensitive' } },
-            { bio: { contains: query, mode: 'insensitive' } },
+            { username: { contains: query, mode: 'insensitive' as any } },
+            { bio: { contains: query, mode: 'insensitive' as any } },
           ],
           isActive: true,
           isEmailVerified: true,
@@ -421,7 +422,6 @@ export class UsersService {
       where: { id },
       data: {
         isActive: false,
-        deactivatedAt: new Date(),
       },
     });
 

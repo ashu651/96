@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
-import { ConfigService } from '@nestjs/config';
+import { ConfigService } from '../config/config.service';
 import { Response } from 'express';
 import * as argon2 from 'argon2';
 import { v4 as uuidv4 } from 'uuid';
@@ -36,7 +36,7 @@ export class AuthService {
    * @returns User information without sensitive data
    */
   async register(registerDto: RegisterDto) {
-    const { email, username, password, bio } = registerDto;
+    const { email, username, password, firstName, lastName } = registerDto;
 
     // Check if user already exists
     const existingUser = await this.prisma.user.findFirst({
@@ -74,7 +74,8 @@ export class AuthService {
           email: email.toLowerCase(),
           username: username.toLowerCase(),
           password: hashedPassword,
-          bio,
+          firstName,
+          lastName,
           verificationToken,
           verificationExpires,
         },
@@ -82,15 +83,15 @@ export class AuthService {
           id: true,
           username: true,
           email: true,
-          bio: true,
+          firstName: true,
+          lastName: true,
           createdAt: true,
         },
       });
 
       // Send verification email
-      await this.emailService.sendVerificationEmail(
+      await this.emailService.sendEmailVerification(
         user.email,
-        user.username,
         verificationToken,
       );
 
@@ -110,11 +111,16 @@ export class AuthService {
    * @returns User information and tokens
    */
   async login(loginDto: LoginDto, response: Response) {
-    const { email, password } = loginDto;
+    const { username, password } = loginDto;
 
     // Find user
-    const user = await this.prisma.user.findUnique({
-      where: { email: email.toLowerCase() },
+    const user = await this.prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: username.toLowerCase() },
+          { username: username.toLowerCase() },
+        ],
+      },
       select: {
         id: true,
         username: true,
@@ -154,7 +160,7 @@ export class AuthService {
     // Set refresh token as HTTP-only cookie
     response.cookie('refreshToken', refreshToken, {
       httpOnly: true,
-      secure: this.configService.get('NODE_ENV') === 'production',
+              secure: this.configService.isProduction,
       sameSite: 'lax',
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     });
@@ -170,7 +176,7 @@ export class AuthService {
     return {
       user: userWithoutPassword,
       accessToken,
-      expiresIn: this.configService.get('JWT_ACCESS_EXPIRES_IN'),
+              expiresIn: this.configService.jwtAccessExpiresIn,
     };
   }
 
@@ -186,7 +192,7 @@ export class AuthService {
     try {
       // Verify refresh token
       const payload = this.jwtService.verify(refreshToken, {
-        secret: this.configService.get('JWT_REFRESH_SECRET'),
+        secret: this.configService.jwtRefreshSecret,
       });
 
       // Check if session exists and is valid
@@ -214,14 +220,14 @@ export class AuthService {
       // Set new refresh token cookie
       response.cookie('refreshToken', newRefreshToken, {
         httpOnly: true,
-        secure: this.configService.get('NODE_ENV') === 'production',
+        secure: this.configService.isProduction,
         sameSite: 'lax',
         maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
       });
 
       return {
         accessToken,
-        expiresIn: this.configService.get('JWT_ACCESS_EXPIRES_IN'),
+        expiresIn: this.configService.jwtAccessExpiresIn,
       };
     } catch (error) {
       throw new UnauthorizedException('Invalid refresh token');
@@ -304,7 +310,6 @@ export class AuthService {
 
     await this.emailService.sendPasswordResetEmail(
       user.email,
-      user.username,
       resetToken,
     );
 
@@ -363,12 +368,12 @@ export class AuthService {
   private async generateTokens(userId: string) {
     const payload = { sub: userId };
     const accessToken = this.jwtService.sign(payload, {
-      secret: this.configService.get('JWT_ACCESS_SECRET'),
-      expiresIn: this.configService.get('JWT_ACCESS_EXPIRES_IN'),
+      secret: this.configService.jwtSecret,
+      expiresIn: this.configService.jwtExpiresIn,
     });
     const refreshToken = this.jwtService.sign(payload, {
-      secret: this.configService.get('JWT_REFRESH_SECRET'),
-      expiresIn: this.configService.get('JWT_REFRESH_EXPIRES_IN'),
+      secret: this.configService.jwtSecret,
+      expiresIn: this.configService.jwtExpiresIn,
     });
 
     return { accessToken, refreshToken };
@@ -382,22 +387,34 @@ export class AuthService {
   private async createOrUpdateSession(userId: string, refreshToken: string) {
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
 
-    await this.prisma.session.upsert({
+    // First try to find an existing session for this user
+    const existingSession = await this.prisma.session.findFirst({
       where: { userId },
-      update: {
-        refreshToken,
-        expiresAt,
-        isActive: true,
-        lastUsedAt: new Date(),
-      },
-      create: {
-        userId,
-        refreshToken,
-        expiresAt,
-        isActive: true,
-        lastUsedAt: new Date(),
-      },
     });
+
+    if (existingSession) {
+      // Update existing session
+      await this.prisma.session.update({
+        where: { id: existingSession.id },
+        data: {
+          refreshToken,
+          expiresAt,
+          isActive: true,
+          lastUsedAt: new Date(),
+        },
+      });
+    } else {
+      // Create new session
+      await this.prisma.session.create({
+        data: {
+          userId,
+          refreshToken,
+          expiresAt,
+          isActive: true,
+          lastUsedAt: new Date(),
+        },
+      });
+    }
   }
 
   /**

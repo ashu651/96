@@ -1,55 +1,54 @@
-import { IsString, IsEmail, MinLength, MaxLength, Matches, IsOptional } from 'class-validator';
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty } from '@nestjs/swagger';
+import { IsString, IsEmail, IsNotEmpty, MinLength, Matches } from 'class-validator';
 
 export class RegisterDto {
   @ApiProperty({
-    description: 'Username for the user account',
+    description: 'Username (unique)',
     example: 'johndoe',
     minLength: 3,
     maxLength: 30,
   })
   @IsString()
-  @MinLength(3, { message: 'Username must be at least 3 characters long' })
-  @MaxLength(30, { message: 'Username cannot exceed 30 characters' })
+  @IsNotEmpty()
+  @MinLength(3)
   @Matches(/^[a-zA-Z0-9_]+$/, {
     message: 'Username can only contain letters, numbers, and underscores',
   })
   username: string;
 
   @ApiProperty({
-    description: 'User email address',
+    description: 'Email address (unique)',
     example: 'john@example.com',
   })
   @IsEmail({}, { message: 'Please provide a valid email address' })
+  @IsNotEmpty()
   email: string;
 
   @ApiProperty({
     description: 'User password',
-    example: 'SecurePass123!',
-    minLength: 8,
+    example: 'password123',
+    minLength: 6,
   })
   @IsString()
-  @MinLength(8, { message: 'Password must be at least 8 characters long' })
-  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/, {
-    message: 'Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character',
-  })
+  @IsNotEmpty()
+  @MinLength(6)
   password: string;
 
-  @ApiPropertyOptional({
-    description: 'User bio or description',
-    example: 'Software developer and coffee enthusiast',
-    maxLength: 500,
+  @ApiProperty({
+    description: 'User first name',
+    example: 'John',
+    required: false,
   })
-  @IsOptional()
   @IsString()
-  @MaxLength(500, { message: 'Bio cannot exceed 500 characters' })
-  bio?: string;
+  @IsNotEmpty()
+  firstName?: string;
 
-  @ApiPropertyOptional({
-    description: 'URL to user avatar image',
-    example: 'https://example.com/avatar.jpg',
+  @ApiProperty({
+    description: 'User last name',
+    example: 'Doe',
+    required: false,
   })
-  @IsOptional()
   @IsString()
-  avatar?: string;
+  @IsNotEmpty()
+  lastName?: string;
 }

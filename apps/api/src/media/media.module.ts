@@ -1,14 +1,11 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
-import { MediaService } from './media.service';
 import { MediaController } from './media.controller';
+import { MediaService } from './media.service';
 import { PrismaModule } from '../prisma/prisma.module';
+import { ConfigModule } from '../config/config.module';
 
-/**
- * Media module for handling file uploads and media management
- */
 @Module({
-  imports: [ConfigModule, PrismaModule],
+  imports: [PrismaModule, ConfigModule],
   controllers: [MediaController],
   providers: [MediaService],
   exports: [MediaService],

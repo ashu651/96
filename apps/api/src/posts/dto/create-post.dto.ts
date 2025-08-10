@@ -1,67 +1,40 @@
-import { IsString, IsOptional, IsArray, IsUrl, MaxLength, IsBoolean } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsString, IsOptional, IsArray, IsBoolean, MaxLength } from 'class-validator';
 
-/**
- * DTO for creating a new post
- */
 export class CreatePostDto {
   @ApiProperty({
     description: 'Post content/text',
-    example: 'Just had an amazing coffee! ☕️',
+    example: 'Just had an amazing day at the beach! 🌊☀️',
     maxLength: 2000,
   })
-  @IsString({ message: 'Content must be a string' })
-  @MaxLength(2000, { message: 'Content must not exceed 2000 characters' })
+  @IsString()
+  @MaxLength(2000)
   content: string;
 
-  @ApiProperty({
-    description: 'Array of media URLs',
+  @ApiPropertyOptional({
+    description: 'Array of media URLs (images/videos)',
     example: ['https://example.com/image1.jpg', 'https://example.com/image2.jpg'],
-    required: false,
     type: [String],
   })
   @IsOptional()
-  @IsArray({ message: 'Media must be an array' })
-  @IsUrl({}, { each: true, message: 'Each media item must be a valid URL' })
-  media?: string[];
+  @IsArray()
+  @IsString({ each: true })
+  mediaUrls?: string[];
 
-  @ApiProperty({
-    description: 'Array of hashtags',
-    example: ['coffee', 'morning', 'lifestyle'],
-    required: false,
-    type: [String],
+  @ApiPropertyOptional({
+    description: 'Whether the post is private (only visible to followers)',
+    example: false,
+    default: false,
   })
   @IsOptional()
-  @IsArray({ message: 'Hashtags must be an array' })
-  @IsString({ each: true, message: 'Each hashtag must be a string' })
-  hashtags?: string[];
+  @IsBoolean()
+  isPrivate?: boolean;
 
-  @ApiProperty({
-    description: 'Location name',
-    example: 'Downtown Coffee Shop',
-    required: false,
+  @ApiPropertyOptional({
+    description: 'Location where the post was created',
+    example: 'Miami Beach, FL',
   })
   @IsOptional()
-  @IsString({ message: 'Location must be a string' })
+  @IsString()
   location?: string;
-
-  @ApiProperty({
-    description: 'Whether the post is public',
-    example: true,
-    required: false,
-    default: true,
-  })
-  @IsOptional()
-  @IsBoolean({ message: 'IsPublic must be a boolean' })
-  isPublic?: boolean;
-
-  @ApiProperty({
-    description: 'Whether to allow comments',
-    example: true,
-    required: false,
-    default: true,
-  })
-  @IsOptional()
-  @IsBoolean({ message: 'AllowComments must be a boolean' })
-  allowComments?: boolean;
 }

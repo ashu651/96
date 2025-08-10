@@ -9,7 +9,6 @@ export class RedisService implements OnModuleDestroy {
 
   constructor(private configService: ConfigService) {
     this.redis = new Redis(this.configService.get('REDIS_URL'), {
-      retryDelayOnFailover: 100,
       enableReadyCheck: false,
       maxRetriesPerRequest: null,
     });

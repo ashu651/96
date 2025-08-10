@@ -1,122 +1,65 @@
-import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { UploadMediaDto, MediaType, MediaCategory } from './dto/upload-media.dto';
-import { UpdateMediaDto } from './dto/update-media.dto';
-import * as cloudinary from 'cloudinary';
-
-export interface CloudinaryUploadResult {
-  public_id: string;
-  secure_url: string;
-  width: number;
-  height: number;
-  format: string;
-  bytes: number;
-  resource_type: string;
-}
+import { ConfigService } from '../config/config.service';
 
 @Injectable()
 export class MediaService {
-  private cloudinary: any;
-
   constructor(
-    private readonly prisma: PrismaService,
-    private readonly configService: ConfigService,
-  ) {
-    // Initialize Cloudinary
-    this.cloudinary = cloudinary.v2;
-    this.cloudinary.config({
-      cloud_name: this.configService.get('CLOUDINARY_CLOUD_NAME'),
-      api_key: this.configService.get('CLOUDINARY_API_KEY'),
-      api_secret: this.configService.get('CLOUDINARY_API_SECRET'),
-    });
-  }
+    private prisma: PrismaService,
+    private configService: ConfigService,
+  ) {}
 
-  /**
-   * Upload a file to Cloudinary
-   */
-  async uploadFile(
-    file: Express.Multer.File,
+  async uploadMedia(
     userId: string,
-    uploadData: UploadMediaDto,
+    file: Express.Multer.File,
+    type: 'avatar' | 'post' | 'story' = 'post',
   ) {
-    try {
-      // Validate file type
-      this.validateFileType(file, uploadData.type);
-
-      // Upload to Cloudinary
-      const uploadResult = await this.uploadToCloudinary(file, uploadData);
-
-      // Save media record to database
-      const media = await this.prisma.media.create({
-        data: {
-          userId,
-          type: uploadData.type,
-          category: uploadData.category,
-          title: uploadData.title,
-          description: uploadData.description,
-          tags: uploadData.tags || [],
-          location: uploadData.location,
-          isPublic: uploadData.isPublic ?? true,
-          url: uploadResult.secure_url,
-          cloudinaryId: uploadResult.public_id,
-          width: uploadResult.width,
-          height: uploadResult.height,
-          format: uploadResult.format,
-          size: uploadResult.bytes,
-          postId: uploadData.postId,
-          storyId: uploadData.storyId,
-        },
-        include: {
-          user: {
-            select: {
-              id: true,
-              username: true,
-              avatar: true,
-            },
-          },
-        },
-      });
-
-      return media;
-    } catch (error) {
-      throw new BadRequestException(`File upload failed: ${error.message}`);
+    // Validate file type
+    if (!this.isValidFileType(file.mimetype)) {
+      throw new BadRequestException('Invalid file type');
     }
+
+    // Validate file size
+    if (file.size > this.configService.maxFileSize) {
+      throw new BadRequestException('File size too large');
+    }
+
+    // In a real implementation, you would upload to cloud storage (AWS S3, Cloudinary, etc.)
+    // For now, we'll simulate by storing the file info
+    const mediaUrl = await this.uploadToCloudStorage(file);
+
+    // Save media record to database
+    const media = await this.prisma.media.create({
+      data: {
+        publicId: `media_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        url: mediaUrl,
+        type,
+        format: file.mimetype.split('/')[1] || 'unknown',
+        filename: file.originalname,
+        mimeType: file.mimetype,
+        size: file.size,
+        user: {
+          connect: { id: userId }
+        },
+      },
+    });
+
+    return media;
   }
 
-  /**
-   * Get media by ID
-   */
-  async findOne(id: string, currentUserId?: string) {
-    const media = await this.prisma.media.findFirst({
-      where: {
-        id,
-        OR: [
-          { isPublic: true },
-          { userId: currentUserId }, // Allow owner to see their private media
-        ],
-        deletedAt: null,
-      },
+  async getMediaById(mediaId: string, userId?: string) {
+    const media = await this.prisma.media.findUnique({
+      where: { id: mediaId },
       include: {
         user: {
           select: {
             id: true,
             username: true,
-            avatar: true,
-          },
-        },
-        post: {
-          select: {
-            id: true,
-            content: true,
-            authorId: true,
-          },
-        },
-        story: {
-          select: {
-            id: true,
-            content: true,
-            authorId: true,
           },
         },
       },
@@ -126,169 +69,57 @@ export class MediaService {
       throw new NotFoundException('Media not found');
     }
 
+    // Check if user has access to this media
+    if (media.user.id !== userId) {
+      // In a real app, you might have different access rules
+      // For now, we'll allow public access to post media
+      if (media.type === 'avatar') {
+        throw new ForbiddenException('Access denied');
+      }
+    }
+
     return media;
   }
 
-  /**
-   * Get user's media
-   */
-  async getUserMedia(
-    userId: string,
-    page: number = 1,
-    limit: number = 20,
-    currentUserId?: string,
-  ) {
-    const skip = (page - 1) * limit;
-
-    // Check if current user can see private media
-    const canSeePrivate = currentUserId === userId;
-
-    const where: any = {
-      userId,
-      deletedAt: null,
-    };
-
-    if (!canSeePrivate) {
-      where.isPublic = true;
-    }
-
-    const [media, total] = await Promise.all([
-      this.prisma.media.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy: { createdAt: 'desc' },
-        include: {
-          user: {
-            select: {
-              id: true,
-              username: true,
-              avatar: true,
-            },
-          },
-        },
-      }),
-      this.prisma.media.count({ where }),
-    ]);
-
-    return {
-      media,
-      pagination: {
-        page,
-        limit,
-        total,
-        pages: Math.ceil(total / limit),
-        hasNext: page * limit < total,
-        hasPrev: page > 1,
-      },
-    };
-  }
-
-  /**
-   * Update media metadata
-   */
-  async update(id: string, userId: string, updateMediaDto: UpdateMediaDto) {
-    // Check if media exists and user owns it
-    const existingMedia = await this.prisma.media.findFirst({
-      where: { id, userId, deletedAt: null },
+  async deleteMedia(mediaId: string, userId: string) {
+    const media = await this.prisma.media.findUnique({
+      where: { id: mediaId },
+      select: { user: { select: { id: true } }, url: true },
     });
 
-    if (!existingMedia) {
-      throw new NotFoundException('Media not found or you do not have permission to edit it');
+    if (!media) {
+      throw new NotFoundException('Media not found');
     }
 
-    // Update media
-    const updatedMedia = await this.prisma.media.update({
-      where: { id },
-      data: {
-        ...updateMediaDto,
-        updatedAt: new Date(),
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            username: true,
-            avatar: true,
-          },
-        },
-      },
-    });
-
-    return updatedMedia;
-  }
-
-  /**
-   * Delete media (soft delete)
-   */
-  async remove(id: string, userId: string) {
-    // Check if media exists and user owns it
-    const existingMedia = await this.prisma.media.findFirst({
-      where: { id, userId, deletedAt: null },
-    });
-
-    if (!existingMedia) {
-      throw new NotFoundException('Media not found or you do not have permission to delete it');
+    if (media.user.id !== userId) {
+      throw new ForbiddenException('You can only delete your own media');
     }
 
-    // Delete from Cloudinary
-    try {
-      await this.cloudinary.uploader.destroy(existingMedia.cloudinaryId);
-    } catch (error) {
-      // Log error but continue with database deletion
-      console.error('Failed to delete from Cloudinary:', error);
-    }
+    // Delete from cloud storage
+    await this.deleteFromCloudStorage(media.url);
 
-    // Soft delete from database
-    await this.prisma.media.update({
-      where: { id },
-      data: { deletedAt: new Date() },
+    // Delete from database
+    await this.prisma.media.delete({
+      where: { id: mediaId },
     });
 
     return { message: 'Media deleted successfully' };
   }
 
-  /**
-   * Get media by category
-   */
-  async getByCategory(
-    category: MediaCategory,
-    page: number = 1,
-    limit: number = 20,
-    currentUserId?: string,
-  ) {
+  async getUserMedia(userId: string, type?: string, page = 1, limit = 20) {
     const skip = (page - 1) * limit;
 
-    const where: any = {
-      category,
-      deletedAt: null,
-    };
-
-    // Only show public media unless user is viewing their own
-    if (currentUserId) {
-      where.OR = [
-        { isPublic: true },
-        { userId: currentUserId },
-      ];
-    } else {
-      where.isPublic = true;
+    const where: any = { uploadedBy: userId };
+    if (type) {
+      where.type = type;
     }
 
     const [media, total] = await Promise.all([
       this.prisma.media.findMany({
         where,
+        orderBy: { createdAt: 'desc' },
         skip,
         take: limit,
-        orderBy: { createdAt: 'desc' },
-        include: {
-          user: {
-            select: {
-              id: true,
-              username: true,
-              avatar: true,
-            },
-          },
-        },
       }),
       this.prisma.media.count({ where }),
     ]);
@@ -300,237 +131,49 @@ export class MediaService {
         limit,
         total,
         pages: Math.ceil(total / limit),
-        hasNext: page * limit < total,
-        hasPrev: page > 1,
       },
     };
   }
 
-  /**
-   * Get media by tags
-   */
-  async getByTags(
-    tags: string[],
-    page: number = 1,
-    limit: number = 20,
-    currentUserId?: string,
-  ) {
-    const skip = (page - 1) * limit;
-
-    const where: any = {
-      tags: { hasSome: tags },
-      deletedAt: null,
-    };
-
-    // Only show public media unless user is viewing their own
-    if (currentUserId) {
-      where.OR = [
-        { isPublic: true },
-        { userId: currentUserId },
-      ];
-    } else {
-      where.isPublic = true;
-    }
-
-    const [media, total] = await Promise.all([
-      this.prisma.media.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy: { createdAt: 'desc' },
-        include: {
-          user: {
-            select: {
-              id: true,
-              username: true,
-              avatar: true,
-            },
-          },
-        },
-      }),
-      this.prisma.media.count({ where }),
-    ]);
-
-    return {
-      media,
-      pagination: {
-        page,
-        limit,
-        total,
-        pages: Math.ceil(total / limit),
-        hasNext: page * limit < total,
-        hasPrev: page > 1,
-      },
-    };
+  private isValidFileType(mimetype: string): boolean {
+    const allowedTypes = this.configService.allowedFileTypes;
+    return allowedTypes.includes(mimetype);
   }
 
-  /**
-   * Generate signed upload URL for direct uploads
-   */
-  async generateUploadUrl(userId: string, uploadData: UploadMediaDto) {
-    const timestamp = Math.round(new Date().getTime() / 1000);
-    const signature = this.cloudinary.utils.api_sign_request(
-      {
-        timestamp,
-        folder: `snapzy/${userId}/${uploadData.category}`,
-        resource_type: uploadData.type === MediaType.VIDEO ? 'video' : 'image',
-        allowed_formats: this.getAllowedFormats(uploadData.type),
-        max_bytes: this.getMaxFileSize(uploadData.type),
-      },
-      this.configService.get('CLOUDINARY_API_SECRET'),
-    );
-
-    return {
-      uploadUrl: `https://api.cloudinary.com/v1_1/${this.configService.get('CLOUDINARY_CLOUD_NAME')}/auto/upload`,
-      params: {
-        timestamp,
-        signature,
-        api_key: this.configService.get('CLOUDINARY_API_KEY'),
-        folder: `snapzy/${userId}/${uploadData.category}`,
-        resource_type: uploadData.type === MediaType.VIDEO ? 'video' : 'image',
-        allowed_formats: this.getAllowedFormats(uploadData.type),
-        max_bytes: this.getMaxFileSize(uploadData.type),
-      },
-    };
-  }
-
-  /**
-   * Process uploaded media (resize, optimize, etc.)
-   */
-  async processMedia(cloudinaryId: string, type: MediaType) {
-    try {
-      if (type === MediaType.IMAGE) {
-        // Generate different sizes for images
-        const transformations = [
-          { width: 150, height: 150, crop: 'fill', quality: 'auto' }, // Thumbnail
-          { width: 400, height: 400, crop: 'limit', quality: 'auto' }, // Medium
-          { width: 800, height: 800, crop: 'limit', quality: 'auto' }, // Large
-        ];
-
-        const processedUrls = await Promise.all(
-          transformations.map(async (transformation) => {
-            const result = await this.cloudinary.url(cloudinaryId, {
-              transformation,
-              secure: true,
-            });
-            return result;
-          }),
-        );
-
-        return {
-          thumbnail: processedUrls[0],
-          medium: processedUrls[1],
-          large: processedUrls[2],
-        };
-      }
-
-      return null;
-    } catch (error) {
-      console.error('Media processing failed:', error);
-      return null;
-    }
-  }
-
-  /**
-   * Validate file type against expected media type
-   */
-  private validateFileType(file: Express.Multer.File, expectedType: MediaType): void {
-    const allowedMimeTypes = this.getAllowedMimeTypes(expectedType);
+  private async uploadToCloudStorage(file: Express.Multer.File): Promise<string> {
+    // TODO: Implement actual cloud storage upload
+    // This is a placeholder implementation
+    const timestamp = Date.now();
+    const filename = `${timestamp}-${file.originalname}`;
     
-    if (!allowedMimeTypes.includes(file.mimetype)) {
-      throw new BadRequestException(
-        `Invalid file type. Expected ${expectedType}, got ${file.mimetype}`,
-      );
-    }
-
-    // Check file size
-    const maxSize = this.getMaxFileSize(expectedType);
-    if (file.size > maxSize) {
-      throw new BadRequestException(
-        `File too large. Maximum size for ${expectedType} is ${maxSize / (1024 * 1024)}MB`,
-      );
-    }
+    // Simulate cloud storage URL
+    return `https://storage.example.com/uploads/${filename}`;
   }
 
-  /**
-   * Get allowed MIME types for media type
-   */
-  private getAllowedMimeTypes(type: MediaType): string[] {
-    switch (type) {
-      case MediaType.IMAGE:
-        return ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-      case MediaType.VIDEO:
-        return ['video/mp4', 'video/avi', 'video/mov', 'video/wmv'];
-      case MediaType.AUDIO:
-        return ['audio/mp3', 'audio/wav', 'audio/ogg', 'audio/m4a'];
-      case MediaType.DOCUMENT:
-        return ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
-      default:
-        return [];
-    }
+  private async deleteFromCloudStorage(url: string): Promise<void> {
+    // TODO: Implement actual cloud storage deletion
+    // This is a placeholder implementation
+    console.log(`Deleting file from cloud storage: ${url}`);
   }
 
-  /**
-   * Get allowed file formats for Cloudinary
-   */
-  private getAllowedFormats(type: MediaType): string {
-    switch (type) {
-      case MediaType.IMAGE:
-        return 'jpg,png,gif,webp';
-      case MediaType.VIDEO:
-        return 'mp4,avi,mov,wmv';
-      case MediaType.AUDIO:
-        return 'mp3,wav,ogg,m4a';
-      case MediaType.DOCUMENT:
-        return 'pdf,doc,docx';
-      default:
-        return '';
-    }
-  }
-
-  /**
-   * Get maximum file size for media type (in bytes)
-   */
-  private getMaxFileSize(type: MediaType): number {
-    switch (type) {
-      case MediaType.IMAGE:
-        return 10 * 1024 * 1024; // 10MB
-      case MediaType.VIDEO:
-        return 100 * 1024 * 1024; // 100MB
-      case MediaType.AUDIO:
-        return 50 * 1024 * 1024; // 50MB
-      case MediaType.DOCUMENT:
-        return 25 * 1024 * 1024; // 25MB
-      default:
-        return 10 * 1024 * 1024; // 10MB default
-    }
-  }
-
-  /**
-   * Upload file to Cloudinary
-   */
-  private async uploadToCloudinary(
-    file: Express.Multer.File,
-    uploadData: UploadMediaDto,
-  ): Promise<CloudinaryUploadResult> {
-    return new Promise((resolve, reject) => {
-      const uploadStream = this.cloudinary.uploader.upload_stream(
-        {
-          folder: `snapzy/${uploadData.category}`,
-          resource_type: uploadData.type === MediaType.VIDEO ? 'video' : 'auto',
-          quality: 'auto',
-          fetch_format: 'auto',
-        },
-        (error: any, result: CloudinaryUploadResult) => {
-          if (error) {
-            reject(error);
-          } else {
-            resolve(result);
-          }
-        },
-      );
-
-      uploadStream.end(file.buffer);
+  async getMediaStats(userId: string) {
+    const stats = await this.prisma.media.groupBy({
+      by: ['type'],
+      where: { uploadedBy: userId },
+      _count: { type: true },
     });
+
+    const totalSize = await this.prisma.media.aggregate({
+      where: { uploadedBy: userId },
+      _sum: { size: true },
+    });
+
+    return {
+      byType: stats.reduce((acc, stat) => {
+        acc[stat.type] = stat._count.type;
+        return acc;
+      }, {} as Record<string, number>),
+      totalSize: totalSize._sum.size || 0,
+    };
   }
 }

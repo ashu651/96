@@ -1,40 +1,81 @@
-import { IsOptional, IsString, MinLength, MaxLength, IsUrl } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { IsString, IsOptional, IsEmail, MaxLength, IsUrl, IsBoolean } from 'class-validator';
 
-/**
- * DTO for updating user profile
- */
 export class UpdateUserDto {
-  @ApiProperty({
-    description: 'Username (must be unique)',
-    example: 'johndoe',
-    required: false,
-    minLength: 3,
-    maxLength: 30,
+  @ApiPropertyOptional({
+    description: 'User first name',
+    example: 'John',
   })
   @IsOptional()
-  @IsString({ message: 'Username must be a string' })
-  @MinLength(3, { message: 'Username must be at least 3 characters long' })
-  @MaxLength(30, { message: 'Username must not exceed 30 characters' })
-  username?: string;
+  @IsString()
+  @MaxLength(50)
+  firstName?: string;
 
-  @ApiProperty({
-    description: 'User bio/description',
+  @ApiPropertyOptional({
+    description: 'User last name',
+    example: 'Doe',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  lastName?: string;
+
+  @ApiPropertyOptional({
+    description: 'User bio or description',
     example: 'Software developer and coffee enthusiast',
-    required: false,
     maxLength: 500,
   })
   @IsOptional()
-  @IsString({ message: 'Bio must be a string' })
-  @MaxLength(500, { message: 'Bio must not exceed 500 characters' })
+  @IsString()
+  @MaxLength(500)
   bio?: string;
 
-  @ApiProperty({
-    description: 'Profile picture URL',
+  @ApiPropertyOptional({
+    description: 'User avatar URL',
     example: 'https://example.com/avatar.jpg',
-    required: false,
   })
   @IsOptional()
-  @IsUrl({}, { message: 'Avatar must be a valid URL' })
+  @IsUrl()
   avatar?: string;
+
+  @ApiPropertyOptional({
+    description: 'User website URL',
+    example: 'https://johndoe.com',
+  })
+  @IsOptional()
+  @IsUrl()
+  website?: string;
+
+  @ApiPropertyOptional({
+    description: 'User location',
+    example: 'San Francisco, CA',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  location?: string;
+
+  @ApiPropertyOptional({
+    description: 'User date of birth',
+    example: '1990-01-01',
+  })
+  @IsOptional()
+  @IsString()
+  dateOfBirth?: string;
+
+  @ApiPropertyOptional({
+    description: 'Whether the user profile is private',
+    example: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  isPrivate?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Whether to show email in profile',
+    example: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  showEmail?: boolean;
 }

@@ -15,9 +15,20 @@ model User {
   username        String    @unique
   email           String    @unique
   password        String
+  firstName       String?
+  lastName        String?
   bio             String?
+  avatar          String?
   profilePhoto    String?
   isEmailVerified Boolean   @default(false)
+  verificationToken String?
+  verificationExpires DateTime?
+  lastLoginAt      DateTime?
+  emailVerifiedAt  DateTime?
+  resetToken       String?
+  resetTokenExpires DateTime?
+  resetExpires     DateTime?
+  passwordChangedAt DateTime?
   isPrivate       Boolean   @default(false)
   isActive        Boolean   @default(true)
   lastSeen        DateTime  @default(now())
@@ -37,7 +48,8 @@ model User {
   conversations   ConversationParticipant[]
   notifications   Notification[]
   reports         Report[]  @relation("reportedBy")
-  reportedContent Report[]  @relation("reportedContent")
+  media           Media[]
+  sentNotifications Notification[] @relation("sentNotifications")
 
   @@map("users")
   @@index([username])
@@ -54,6 +66,7 @@ model Session {
   isActive     Boolean  @default(true)
   createdAt    DateTime @default(now())
   expiresAt    DateTime
+  lastUsedAt   DateTime @default(now())
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("sessions")
@@ -80,7 +93,7 @@ model Post {
   comments    Comment[]
   shares      Share[]
   saves       Save[]
-  reports     Report[]
+  reports     Report[] @relation("reportedPosts")
 
   @@map("posts")
   @@index([authorId])
@@ -171,7 +184,7 @@ model Comment {
   parent     Comment?  @relation("CommentReplies", fields: [parentId], references: [id])
   replies    Comment[] @relation("CommentReplies")
   likes      CommentLike[]
-  reports    Report[]
+  reports    Report[] @relation("reportedComments")
 
   @@map("comments")
   @@index([authorId])
@@ -284,6 +297,7 @@ model Message {
   id             String    @id @default(cuid())
   conversationId String
   senderId       String
+  recipientId    String
   content        String
   type           String    @default("text") // "text", "image", "video", "audio"
   media          Json?     // Media object with cloudinary data
@@ -295,6 +309,7 @@ model Message {
   // Relations
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   sender        User         @relation("sentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+  recipient     User         @relation("receivedMessages", fields: [recipientId], references: [id], onDelete: Cascade)
 
   @@map("messages")
   @@index([conversationId])
@@ -305,18 +320,25 @@ model Message {
 model Notification {
   id           String   @id @default(cuid())
   userId       String
+  senderId     String?
   type         String   // "like", "comment", "follow", "mention", "message"
   title        String
   body         String
   data         Json?    // Additional data for the notification
+  postId       String?
+  commentId    String?
+  storyId      String?
+  messageId    String?
   isRead       Boolean  @default(false)
   createdAt    DateTime @default(now())
 
   // Relations
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sender       User?    @relation("sentNotifications", fields: [senderId], references: [id], onDelete: SetNull)
 
   @@map("notifications")
   @@index([userId])
+  @@index([senderId])
   @@index([type])
   @@index([isRead])
   @@index([createdAt])
@@ -327,6 +349,8 @@ model Report {
   reporterId   String
   contentType  String   // "post", "comment", "user"
   contentId    String
+  postId       String?
+  commentId    String?
   reason       String
   description  String?
   status       String   @default("pending") // "pending", "reviewed", "resolved", "dismissed"
@@ -337,7 +361,8 @@ model Report {
 
   // Relations
   reporter     User     @relation("reportedBy", fields: [reporterId], references: [id], onDelete: Cascade)
-  reportedContent User? @relation("reportedContent", fields: [contentId], references: [id])
+  reportedPost Post?   @relation("reportedPosts", fields: [postId], references: [id])
+  reportedComment Comment? @relation("reportedComments", fields: [commentId], references: [id])
 
   @@map("reports")
   @@index([reporterId])
@@ -353,14 +378,19 @@ model Media {
   url          String
   type         String   // "image", "video", "audio"
   format       String
+  mimeType     String   // MIME type of the file
   size         Int      // Size in bytes
   width        Int?
   height       Int?
   duration     Int?     // For video/audio in seconds
   thumbnail    String?  // Thumbnail URL
+  filename     String?  // Original filename
   metadata     Json?    // Additional metadata
   uploadedBy   String
   createdAt    DateTime @default(now())
+
+  // Relations
+  user         User     @relation(fields: [uploadedBy], references: [id], onDelete: Cascade)
 
   @@map("media")
   @@index([publicId])

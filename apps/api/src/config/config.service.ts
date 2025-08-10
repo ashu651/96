@@ -28,6 +28,14 @@ export class ConfigService {
     return this.configService.get<string>('JWT_REFRESH_EXPIRES_IN', '7d');
   }
 
+  get jwtExpiresIn(): string {
+    return this.configService.get<string>('JWT_EXPIRES_IN', '15m');
+  }
+
+  get jwtRefreshSecret(): string {
+    return this.configService.get<string>('JWT_REFRESH_SECRET', this.jwtSecret);
+  }
+
   // Email
   get sendgridApiKey(): string {
     return this.configService.get<string>('SENDGRID_API_KEY');
