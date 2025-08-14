@@ -1,0 +1,36 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  # - "first_rules.yml"
+  # - "second_rules.yml"
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'snapzy-api'
+    static_configs:
+      - targets: ['api:3000']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  - job_name: 'snapzy-captioning'
+    static_configs:
+      - targets: ['captioning-service:8000']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  - job_name: 'snapzy-moderation'
+    static_configs:
+      - targets: ['moderation-service:8000']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  - job_name: 'snapzy-embeddings'
+    static_configs:
+      - targets: ['embeddings-service:8000']
+    metrics_path: '/metrics'
+    scrape_interval: 10s

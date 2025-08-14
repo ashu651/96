@@ -1,0 +1,427 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String    @id @default(cuid())
+  username        String    @unique
+  email           String    @unique
+  password        String
+  firstName       String?
+  lastName        String?
+  bio             String?
+  avatar          String?
+  profilePhoto    String?
+  isEmailVerified Boolean   @default(false)
+  verificationToken String?
+  verificationExpires DateTime?
+  lastLoginAt      DateTime?
+  emailVerifiedAt  DateTime?
+  resetToken       String?
+  resetTokenExpires DateTime?
+  resetExpires     DateTime?
+  passwordChangedAt DateTime?
+  isPrivate       Boolean   @default(false)
+  isActive        Boolean   @default(true)
+  lastSeen        DateTime  @default(now())
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // Relations
+  posts           Post[]
+  stories         Story[]
+  comments        Comment[]
+  likes           Like[]
+  followers       Follow[]  @relation("followers")
+  following       Follow[]  @relation("following")
+  sessions        Session[]
+  sentMessages    Message[] @relation("sentMessages")
+  receivedMessages Message[] @relation("receivedMessages")
+  conversations   ConversationParticipant[]
+  notifications   Notification[]
+  reports         Report[]  @relation("reportedBy")
+  media           Media[]
+  sentNotifications Notification[] @relation("sentNotifications")
+
+  @@map("users")
+  @@index([username])
+  @@index([email])
+  @@index([createdAt])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  refreshToken String   @unique
+  userAgent    String?
+  ipAddress    String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  expiresAt    DateTime
+  lastUsedAt   DateTime @default(now())
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+  @@index([userId])
+  @@index([refreshToken])
+  @@index([expiresAt])
+}
+
+model Post {
+  id          String    @id @default(cuid())
+  authorId    String
+  caption     String?
+  media       Json      // Array of media objects with cloudinary data
+  location    String?
+  hashtags    String[]  // Array of hashtags
+  isPrivate   Boolean   @default(false)
+  isArchived  Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relations
+  author      User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  likes       Like[]
+  comments    Comment[]
+  shares      Share[]
+  saves       Save[]
+  reports     Report[] @relation("reportedPosts")
+
+  @@map("posts")
+  @@index([authorId])
+  @@index([createdAt])
+  @@index([hashtags])
+}
+
+model Story {
+  id        String   @id @default(cuid())
+  authorId  String
+  media     Json     // Media object with cloudinary data
+  caption   String?
+  expiresAt DateTime // Stories expire after 24 hours
+  createdAt DateTime @default(now())
+
+  // Relations
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  views     StoryView[]
+  reactions StoryReaction[]
+
+  @@map("stories")
+  @@index([authorId])
+  @@index([expiresAt])
+  @@index([createdAt])
+}
+
+model StoryView {
+  id        String   @id @default(cuid())
+  storyId   String
+  viewerId  String
+  viewedAt  DateTime @default(now())
+
+  // Relations
+  story     Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
+
+  @@unique([storyId, viewerId])
+  @@map("story_views")
+  @@index([storyId])
+  @@index([viewerId])
+}
+
+model StoryReaction {
+  id        String   @id @default(cuid())
+  storyId   String
+  userId    String
+  reaction  String   // emoji or reaction type
+  createdAt DateTime @default(now())
+
+  // Relations
+  story     Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
+
+  @@unique([storyId, userId])
+  @@map("story_reactions")
+  @@index([storyId])
+  @@index([userId])
+}
+
+model Like {
+  id        String   @id @default(cuid())
+  userId    String
+  postId    String
+  createdAt DateTime @default(now())
+
+  // Relations
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, postId])
+  @@map("likes")
+  @@index([userId])
+  @@index([postId])
+}
+
+model Comment {
+  id         String    @id @default(cuid())
+  content    String
+  authorId   String
+  postId     String
+  parentId   String?   // For threaded comments
+  isEdited   Boolean   @default(false)
+  isDeleted  Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  // Relations
+  author     User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  post       Post      @relation(fields: [postId], references: [id], onDelete: Cascade)
+  parent     Comment?  @relation("CommentReplies", fields: [parentId], references: [id])
+  replies    Comment[] @relation("CommentReplies")
+  likes      CommentLike[]
+  reports    Report[] @relation("reportedComments")
+
+  @@map("comments")
+  @@index([authorId])
+  @@index([postId])
+  @@index([parentId])
+  @@index([createdAt])
+}
+
+model CommentLike {
+  id        String   @id @default(cuid())
+  userId    String
+  commentId String
+  createdAt DateTime @default(now())
+
+  // Relations
+  comment   Comment  @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, commentId])
+  @@map("comment_likes")
+  @@index([userId])
+  @@index([commentId])
+}
+
+model Share {
+  id        String   @id @default(cuid())
+  userId    String
+  postId    String
+  platform  String   // "instagram", "twitter", "facebook", etc.
+  sharedAt  DateTime @default(now())
+
+  // Relations
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@map("shares")
+  @@index([userId])
+  @@index([postId])
+  @@index([sharedAt])
+}
+
+model Save {
+  id        String   @id @default(cuid())
+  userId    String
+  postId    String
+  savedAt   DateTime @default(now())
+
+  // Relations
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, postId])
+  @@map("saves")
+  @@index([userId])
+  @@index([postId])
+}
+
+model Follow {
+  id          String   @id @default(cuid())
+  followerId  String
+  followingId String
+  isAccepted  Boolean  @default(true) // For private accounts
+  followedAt  DateTime @default(now())
+
+  // Relations
+  follower   User     @relation("followers", fields: [followerId], references: [id], onDelete: Cascade)
+  following  User     @relation("following", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, followingId])
+  @@map("follows")
+  @@index([followerId])
+  @@index([followingId])
+  @@index([followedAt])
+}
+
+model Conversation {
+  id           String   @id @default(cuid())
+  type         String   @default("direct") // "direct" or "group"
+  name         String?  // For group conversations
+  avatar       String?  // For group conversations
+  lastMessage  String?
+  lastMessageAt DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  participants ConversationParticipant[]
+  messages     Message[]
+
+  @@map("conversations")
+  @@index([lastMessageAt])
+}
+
+model ConversationParticipant {
+  id             String   @id @default(cuid())
+  conversationId String
+  userId         String
+  isAdmin        Boolean  @default(false) // For group conversations
+  joinedAt       DateTime @default(now())
+  leftAt         DateTime?
+
+  // Relations
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@map("conversation_participants")
+  @@index([conversationId])
+  @@index([userId])
+}
+
+model Message {
+  id             String    @id @default(cuid())
+  conversationId String
+  senderId       String
+  recipientId    String
+  content        String
+  type           String    @default("text") // "text", "image", "video", "audio"
+  media          Json?     // Media object with cloudinary data
+  isRead         Boolean   @default(false)
+  isDeleted      Boolean   @default(false)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  // Relations
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender        User         @relation("sentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+  recipient     User         @relation("receivedMessages", fields: [recipientId], references: [id], onDelete: Cascade)
+
+  @@map("messages")
+  @@index([conversationId])
+  @@index([senderId])
+  @@index([createdAt])
+}
+
+model Notification {
+  id           String   @id @default(cuid())
+  userId       String
+  senderId     String?
+  type         String   // "like", "comment", "follow", "mention", "message"
+  title        String
+  body         String
+  data         Json?    // Additional data for the notification
+  postId       String?
+  commentId    String?
+  storyId      String?
+  messageId    String?
+  isRead       Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  // Relations
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sender       User?    @relation("sentNotifications", fields: [senderId], references: [id], onDelete: SetNull)
+
+  @@map("notifications")
+  @@index([userId])
+  @@index([senderId])
+  @@index([type])
+  @@index([isRead])
+  @@index([createdAt])
+}
+
+model Report {
+  id           String   @id @default(cuid())
+  reporterId   String
+  contentType  String   // "post", "comment", "user"
+  contentId    String
+  postId       String?
+  commentId    String?
+  reason       String
+  description  String?
+  status       String   @default("pending") // "pending", "reviewed", "resolved", "dismissed"
+  moderatorId  String?
+  moderatedAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  reporter     User     @relation("reportedBy", fields: [reporterId], references: [id], onDelete: Cascade)
+  reportedPost Post?   @relation("reportedPosts", fields: [postId], references: [id])
+  reportedComment Comment? @relation("reportedComments", fields: [commentId], references: [id])
+
+  @@map("reports")
+  @@index([reporterId])
+  @@index([contentType])
+  @@index([contentId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Media {
+  id           String   @id @default(cuid())
+  publicId     String   @unique // Cloudinary public ID
+  url          String
+  type         String   // "image", "video", "audio"
+  format       String
+  mimeType     String   // MIME type of the file
+  size         Int      // Size in bytes
+  width        Int?
+  height       Int?
+  duration     Int?     // For video/audio in seconds
+  thumbnail    String?  // Thumbnail URL
+  filename     String?  // Original filename
+  metadata     Json?    // Additional metadata
+  uploadedBy   String
+  createdAt    DateTime @default(now())
+
+  // Relations
+  user         User     @relation(fields: [uploadedBy], references: [id], onDelete: Cascade)
+
+  @@map("media")
+  @@index([publicId])
+  @@index([type])
+  @@index([uploadedBy])
+  @@index([createdAt])
+}
+
+model Hashtag {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  count     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("hashtags")
+  @@index([name])
+  @@index([count])
+}
+
+model Location {
+  id        String   @id @default(cuid())
+  name      String
+  latitude  Float?
+  longitude Float?
+  count     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("locations")
+  @@index([name])
+  @@index([latitude, longitude])
+  @@index([count])
+}
